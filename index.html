@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        .container {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .grid-container {
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #ccc;
+            max-width: fit-content;
+            margin-top: 20px;
+        }
+        .row {
+            display: flex;
+            position: relative;
+        }
+        .tile {
+            width: 50px;
+            height: 50px;
+            border: 1px solid #aaa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            background-color: #f8f8f8;
+            user-select: none;
+            cursor: grab;
+            position: relative;
+        }
+        .tile.dragging {
+            opacity: 0.8;
+            background-color: #e0e0ff;
+            z-index: 100;
+            cursor: grabbing;
+        }
+        .tile.new-cell {
+            background-color: #ffeeee;
+        }
+        .tile.whitespace {
+            background-color: #f0f0f0;
+            color: transparent;
+        }
+        .row-controls {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            margin-left: 10px;
+        }
+        .row-control {
+            padding: 5px 10px;
+            margin: 2px;
+            cursor: pointer;
+            background-color: #e0e0e0;
+            border: none;
+            border-radius: 4px;
+        }
+        .row-control:hover {
+            background-color: #d0d0d0;
+        }
+        .buttons {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        .button {
+            padding: 10px 15px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .button:hover {
+            background-color: #3b78e7;
+        }
+        .input-area {
+            margin-top: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 10px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Letter Grid</h1>
+        <div class="input-area">
+            <h3>Input Grid Data (one row per line)</h3>
+            <textarea id="gridInput">ABCDEF
+GHIJKL
+ MNOPQ
+RSTUV 
+WXYZ  </textarea>
+            <button class="button" onclick="loadGridFromText()">Load Grid</button>
+        </div>
+        
+        <div class="buttons">
+            <button class="button" id="transposeButton">Transpose Grid</button>
+            <button class="button" id="resetButton">Reset Grid</button>
+        </div>
+        
+        <div id="gridContainer" class="grid-container">
+            <!-- Grid will be generated here -->
+        </div>
+    </div>
+
+    <script>
+        // Grid data and state
+        let gridData = [];
+        let originalGridData = [];
+        let numRows = 0;
+        let numCols = 0;
+        let newCellPositions = new Set();
+        let isDragging = false;
+        let dragStartCol = -1;
+        let dragStartRow = -1;
+        let currentDragTile = null;
+        
+        // Initialize the grid when the page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            loadGridFromText();
+            
+            document.getElementById('transposeButton').addEventListener('click', transposeGrid);
+            document.getElementById('resetButton').addEventListener('click', resetGrid);
+            
+            document.addEventListener('mouseup', function() {
+                if (isDragging) {
+                    endDrag();
+                }
+            });
+        });
+        
+        // Load grid from text input
+        function loadGridFromText() {
+            const inputText = document.getElementById('gridInput').value;
+            const rows = inputText.split('\n').filter(row => row.trim() !== '');
+            
+            // Find the maximum row length to determine columns
+            numCols = Math.max(...rows.map(row => row.length));
+            numRows = rows.length;
+            
+            // Pad all rows to have the same length
+            gridData = rows.map(row => {
+                const paddedRow = row + ' '.repeat(numCols - row.length);
+                return paddedRow.split('');
+            });
+            
+            // Store the original data for reset
+            originalGridData = gridData.map(row => [...row]);
+            
+            // Clear any new cell positions
+            newCellPositions = new Set();
+            
+            // Render the grid
+            renderGrid();
+        }
+        
+        // Render the grid based on current data
+        function renderGrid() {
+            const gridContainer = document.getElementById('gridContainer');
+            gridContainer.innerHTML = '';
+            
+            for (let rowIndex = 0; rowIndex < gridData.length; rowIndex++) {
+                const rowDiv = document.createElement('div');
+                rowDiv.className = 'row';
+                
+                // Create tiles for this row
+                for (let colIndex = 0; colIndex < gridData[rowIndex].length; colIndex++) {
+                    const cell = gridData[rowIndex][colIndex];
+                    const tileDiv = document.createElement('div');
+                    tileDiv.className = 'tile';
+                    if (cell === ' ') {
+                        tileDiv.classList.add('whitespace');
+                    }
+                    
+                    // Check if this is a new cell
+                    const posKey = `${rowIndex},${colIndex}`;
+                    if (newCellPositions.has(posKey)) {
+                        tileDiv.classList.add('new-cell');
+                    }
+                    
+                    tileDiv.textContent = cell;
+                    tileDiv.dataset.row = rowIndex;
+                    tileDiv.dataset.col = colIndex;
+                    
+                    // Add event listeners for drag operations
+                    tileDiv.addEventListener('mousedown', startDrag);
+                    tileDiv.addEventListener('mousemove', continueDrag);
+                    
+                    rowDiv.appendChild(tileDiv);
+                }
+                
+                // Add row control buttons
+                const rowControls = document.createElement('div');
+                rowControls.className = 'row-controls';
+                
+                const leftButton = document.createElement('button');
+                leftButton.className = 'row-control';
+                leftButton.textContent = '←';
+                leftButton.dataset.row = rowIndex;
+                leftButton.addEventListener('click', () => shiftRow(rowIndex, -1));
+                
+                const rightButton = document.createElement('button');
+                rightButton.className = 'row-control';
+                rightButton.textContent = '→';
+                rightButton.dataset.row = rowIndex;
+                rightButton.addEventListener('click', () => shiftRow(rowIndex, 1));
+                
+                rowControls.appendChild(leftButton);
+                rowControls.appendChild(rightButton);
+                rowDiv.appendChild(rowControls);
+                
+                gridContainer.appendChild(rowDiv);
+            }
+        }
+        
+        // Start dragging a tile
+        function startDrag(event) {
+            const tile = event.currentTarget;
+            dragStartRow = parseInt(tile.dataset.row);
+            dragStartCol = parseInt(tile.dataset.col);
+            isDragging = true;
+            currentDragTile = tile;
+            tile.classList.add('dragging');
+            
+            // Prevent default to stop text selection during drag
+            event.preventDefault();
+        }
+        
+        // Continue dragging over other tiles
+        function continueDrag(event) {
+            if (!isDragging) return;
+            
+            const tile = event.currentTarget;
+            const currentRow = parseInt(tile.dataset.row);
+            const currentCol = parseInt(tile.dataset.col);
+            
+            // Only process if we're in the same row
+            if (currentRow === dragStartRow && currentCol !== dragStartCol) {
+                const distance = currentCol - dragStartCol;
+                moveRow(dragStartRow, dragStartCol, distance);
+                
+                // Reset drag start position for continued dragging
+                dragStartCol = currentCol;
+                currentDragTile.classList.remove('dragging');
+                currentDragTile = tile;
+                tile.classList.add('dragging');
+            }
+        }
+        
+        // End the dragging operation
+        function endDrag() {
+            isDragging = false;
+            if (currentDragTile) {
+                currentDragTile.classList.remove('dragging');
+                currentDragTile = null;
+            }
+            dragStartCol = -1;
+            dragStartRow = -1;
+        }
+        
+        // Move tiles in a row
+        function moveRow(rowIndex, startCol, distance) {
+            if (distance === 0) return;
+            
+            const row = gridData[rowIndex];
+            
+            // Store the extended row to handle off-grid items
+            let extendedRow = [...row];
+            
+            if (distance > 0) {
+                // Moving right, insert spaces at the start column
+                for (let i = 0; i < distance; i++) {
+                    // Mark the new space cells
+                    const posKey = `${rowIndex},${startCol + i}`;
+                    newCellPositions.add(posKey);
+                }
+                
+                // Update the grid data with moved tiles
+                for (let i = row.length - 1; i >= startCol; i--) {
+                    if (i + distance < row.length) {
+                        row[i + distance] = row[i];
+                    }
+                    // If it goes beyond the visible grid, we still keep track of it
+                    else {
+                        extendedRow[i + distance] = row[i];
+                    }
+                }
+                
+                // Fill the vacated spaces with spaces
+                for (let i = startCol; i < startCol + distance && i < row.length; i++) {
+                    row[i] = ' ';
+                }
+            } else {
+                // Moving left, remove spaces from the left
+                const absDistance = Math.abs(distance);
+                
+                // Update the grid data with moved tiles
+                for (let i = startCol; i < row.length; i++) {
+                    if (i - absDistance >= 0) {
+                        row[i - absDistance] = row[i];
+                    }
+                }
+                
+                // Fill the right side with spaces
+                for (let i = row.length - absDistance; i < row.length; i++) {
+                    if (i >= 0) {
+                        row[i] = ' ';
+                        const posKey = `${rowIndex},${i}`;
+                        newCellPositions.add(posKey);
+                    }
+                }
+            }
+            
+            // Re-render the grid
+            renderGrid();
+        }
+        
+        // Shift entire row left or right
+        function shiftRow(rowIndex, direction) {
+            const row = gridData[rowIndex];
+            
+            if (direction > 0) {
+                // Shift right
+                const lastChar = row.pop();
+                row.unshift(' ');
+                
+                // Mark the new cell
+                const posKey = `${rowIndex},0`;
+                newCellPositions.add(posKey);
+            } else {
+                // Shift left
+                const firstChar = row.shift();
+                row.push(' ');
+                
+                // Mark the new cell
+                const posKey = `${rowIndex},${row.length - 1}`;
+                newCellPositions.add(posKey);
+            }
+            
+            renderGrid();
+        }
+        
+        // Transpose the grid
+        function transposeGrid() {
+            const transposedGrid = [];
+            
+            // Create empty rows for the transposed grid
+            for (let i = 0; i < numCols; i++) {
+                transposedGrid.push(Array(numRows).fill(' '));
+            }
+            
+            // Fill the transposed grid
+            for (let i = 0; i < numRows; i++) {
+                for (let j = 0; j < numCols; j++) {
+                    transposedGrid[j][i] = gridData[i][j];
+                }
+            }
+            
+            // Update the grid data
+            gridData = transposedGrid;
+            
+            // Swap rows and columns count
+            const temp = numRows;
+            numRows = numCols;
+            numCols = temp;
+            
+            // Clear new cell positions
+            newCellPositions = new Set();
+            
+            // Re-render the grid
+            renderGrid();
+        }
+        
+        // Reset the grid to its original state
+        function resetGrid() {
+            gridData = originalGridData.map(row => [...row]);
+            
+            // Clear new cell positions
+            newCellPositions = new Set();
+            
+            renderGrid();
+        }
+    </script>
+</body>
+</html>
